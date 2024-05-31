@@ -47,6 +47,11 @@ const registerCommands = (guild) => {
     name: "leaderboard",
     description: "Display the leaderboard of most active users",
   });
+
+  guild.commands.create({
+    name: "stats",
+    description: "Display your most played tracks and play count",
+  });
 };
 
 // Discord bot ready event
@@ -65,9 +70,9 @@ client.on("guildCreate", (guild) => {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isCommand()) return;
 
-  const { commandName, guildId } = interaction;
+  const { commandName, guildId, user } = interaction;
+
   if (commandName === "mostplayed") {
-    // Fetch most played tracks from the database for the current guild
     db.all(
       "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 10",
       [guildId],
@@ -79,7 +84,6 @@ client.on("interactionCreate", async (interaction) => {
           );
         }
 
-        // Format the response with markdown as a list
         const tracks = rows.map(
           (row, index) =>
             `\`${index + 1}.\` **${row.track_name}** by *${row.artist}* - Plays: \`${row.plays}\``,
@@ -88,12 +92,10 @@ client.on("interactionCreate", async (interaction) => {
           ? `**Most Played Tracks:**\n${tracks.join("\n")}`
           : "*No tracks found.*";
 
-        // Send the response
         interaction.reply(response);
       },
     );
   } else if (commandName === "mostactive") {
-    // Fetch most active user
     db.get(
       "SELECT user, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY user ORDER BY plays DESC LIMIT 1",
       [guildId],
@@ -105,17 +107,14 @@ client.on("interactionCreate", async (interaction) => {
           );
         }
 
-        // Format the response with markdown
         const response = row
           ? `**Most Active User:**\n\`${row.user}\` - Plays: \`${row.plays}\``
           : "*No active users found.*";
 
-        // Send the response
         interaction.reply(response);
       },
     );
   } else if (commandName === "leaderboard") {
-    // Fetch leaderboard of most active users
     db.all(
       "SELECT user, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY user ORDER BY plays DESC LIMIT 10",
       [guildId],
@@ -127,7 +126,6 @@ client.on("interactionCreate", async (interaction) => {
           );
         }
 
-        // Markdown
         const leaderboard = rows.map(
           (row, index) =>
             `\`${index + 1}.\` **${row.user}** - Plays: \`${row.plays}\``,
@@ -135,6 +133,29 @@ client.on("interactionCreate", async (interaction) => {
         const response = leaderboard.length
           ? `**Leaderboard of Most Active Users:**\n${leaderboard.join("\n")}`
           : "*No data found.*";
+        interaction.reply(response);
+      },
+    );
+  } else if (commandName === "stats") {
+    db.all(
+      "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? AND user = ? GROUP BY track_name, artist ORDER BY plays DESC",
+      [guildId, user.tag],
+      (err, rows) => {
+        if (err) {
+          console.error(err);
+          return interaction.reply(
+            "An error occurred while fetching your played tracks.",
+          );
+        }
+
+        const tracks = rows.map(
+          (row, index) =>
+            `\`${index + 1}.\` **${row.track_name}** by *${row.artist}* - Plays: \`${row.plays}\``,
+        );
+        const response = tracks.length
+          ? `**Your Played Tracks:**\n${tracks.join("\n")}`
+          : "*You have not played any tracks.*";
+
         interaction.reply(response);
       },
     );
@@ -156,7 +177,7 @@ client.on("presenceUpdate", (oldPresence, newPresence) => {
         const trackName = activity.details;
         const artist = activity.state;
         const timestamp = new Date().toISOString();
-        const guildId = newPresence.guild.id; // Get the guild ID
+        const guildId = newPresence.guild.id;
 
         console.log(
           `User ${user} is listening to ${trackName} by ${artist} in guild ${guildId}`,
