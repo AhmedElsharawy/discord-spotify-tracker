@@ -75,11 +75,69 @@ client.on("interactionCreate", async (interaction) => {
   const { commandName, guildId, user } = interaction;
 
   if (commandName === "mostplayed") {
-    // Implementation for mostplayed command
+    db.all(
+      "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 10",
+      [guildId],
+      (err, rows) => {
+        if (err) {
+          console.error(err);
+          return interaction.reply(
+            "An error occurred while fetching most played tracks.",
+          );
+        }
+
+        const tracks = rows.map(
+          (row, index) =>
+            `\`${index + 1}.\` **${row.track_name}** by *${row.artist}* - Plays: \`${row.plays}\``,
+        );
+        const response = tracks.length
+          ? `**Most Played Tracks:**\n${tracks.join("\n")}`
+          : "*No tracks found.*";
+
+        interaction.reply(response);
+      },
+    );
   } else if (commandName === "mostactive") {
-    // Implementation for mostactive command
+    db.get(
+      "SELECT user, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY user ORDER BY plays DESC LIMIT 1",
+      [guildId],
+      (err, row) => {
+        if (err) {
+          console.error(err);
+          return interaction.reply(
+            "An error occurred while fetching most active user.",
+          );
+        }
+
+        const response = row
+          ? `**Most Active User:**\n\`${row.user}\` - Plays: \`${row.plays}\``
+          : "*No active users found.*";
+
+        interaction.reply(response);
+      },
+    );
   } else if (commandName === "leaderboard") {
-    // Implementation for leaderboard command
+    db.all(
+      "SELECT user, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY user ORDER BY plays DESC LIMIT 10",
+      [guildId],
+      (err, rows) => {
+        if (err) {
+          console.error(err);
+          return interaction.reply(
+            "An error occurred while fetching leaderboard.",
+          );
+        }
+
+        const leaderboard = rows.map(
+          (row, index) =>
+            `\`${index + 1}.\` **${row.user}** - Plays: \`${row.plays}\``,
+        );
+        const response = leaderboard.length
+          ? `**Leaderboard of Most Active Users:**\n${leaderboard.join("\n")}`
+          : "*No data found.*";
+        interaction.reply(response);
+      },
+    );
   } else if (commandName === "stats") {
     db.all(
       "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? AND user = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 20",
@@ -101,7 +159,9 @@ client.on("interactionCreate", async (interaction) => {
           : "*You have not played any tracks.*";
 
         if (response.length > 2000) {
-          await interaction.reply("Your top 20 played tracks exceed the message length limit. Sending in multiple parts...");
+          await interaction.reply(
+            "Your top 20 played tracks exceed the message length limit. Sending in multiple parts...",
+          );
           await sendPaginatedMessage(interaction, response);
         } else {
           interaction.reply(response);
@@ -116,4 +176,3 @@ client.on("presenceUpdate", (oldPresence, newPresence) => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
