@@ -172,7 +172,46 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 client.on("presenceUpdate", (oldPresence, newPresence) => {
-  // Implementation for presenceUpdate event
+  // Monitor user presence
+  console.log(
+    `Presence update detected for user: ${newPresence.user?.tag || "Unknown User"}`,
+  );
+
+  if (newPresence.activities && newPresence.activities.length > 0) {
+    console.log(`Activities: ${JSON.stringify(newPresence.activities)}`);
+    newPresence.activities.forEach((activity) => {
+      console.log(`Activity detected: ${JSON.stringify(activity)}`);
+      if (activity.type === 2 && activity.name === "Spotify") {
+        const user = newPresence.user.tag;
+        const trackName = activity.details;
+        const artist = activity.state;
+        const timestamp = new Date().toISOString();
+        const guildId = newPresence.guild.id;
+
+        console.log(
+          `User ${user} is listening to ${trackName} by ${artist} in guild ${guildId}`,
+        );
+
+        console.log(
+          `Inserting data: ${guildId}, ${user}, ${trackName}, ${artist}, ${timestamp}`,
+        );
+
+        db.run(
+          "INSERT INTO tracks (guild_id, user, track_name, artist, timestamp) VALUES (?, ?, ?, ?, ?)",
+          [guildId, user, trackName, artist, timestamp],
+          (err) => {
+            if (err) {
+              console.error(`Database insertion error: ${err.message}`);
+            } else {
+              console.log(`Track inserted: ${trackName} by ${artist}`);
+            }
+          },
+        );
+      }
+    });
+  } else {
+    console.log("No activities found.");
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
