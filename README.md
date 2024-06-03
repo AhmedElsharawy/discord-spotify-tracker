@@ -18,6 +18,7 @@ DISCORD_USER_ID= your_discord_user_id
 SPOTIFY_CLIENT_ID= your_spotify_client_id
 SPOTIFY_CLIENT_SECRET= your_spotify_client_secret
 SPOTIFY_REDIRECT_URI= your_spotify_redirect_uri
+YOUR_URI= your_ip_OR_url
 ```
 Run `npm i` to install all the necessary node_modules.
 

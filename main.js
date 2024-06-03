@@ -73,7 +73,18 @@ app.get("/callback", (req, res) => {
       res.send("Success! You can close this window.");
 
       // Schedule the weekly cron job to create the Spotify playlist
-      cron.schedule("0 0 * * 1", () => createWeeklySpotifyPlaylist());
+      cron.schedule("0 0 * * 1", () => {
+        db.all("SELECT guild_id FROM settings", (err, rows) => {
+          if (err) {
+            console.error(`Error fetching guild settings: ${err.message}`);
+            return;
+          }
+
+          rows.forEach((row) => {
+            createWeeklySpotifyPlaylist(row.guild_id);
+          });
+        });
+      });
     },
     function (err) {
       console.log("Something went wrong!", err);
@@ -86,15 +97,19 @@ const PORT = process.env.PORT || 8888;
 app.listen(PORT, () => {
   console.log(`Express server listening on port ${PORT}`);
   console.log(
-    "Authorize this app by visiting this URL: http://localhost:" +
+    "Authorize this app by visiting this URL:" +
+      process.env.YOUR_URI +
+      ":" +
       PORT +
       "/login",
   );
 });
 
-const createWeeklySpotifyPlaylist = () => {
+const createWeeklySpotifyPlaylist = (guildId) => {
+  const guild = client.guilds.cache.get(guildId);
   db.all(
-    "SELECT track_name, artist, COUNT(*) as plays FROM tracks GROUP BY track_name, artist ORDER BY plays DESC LIMIT 40",
+    "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 40",
+    [guildId],
     (err, rows) => {
       if (err) {
         console.error(err);
@@ -127,10 +142,11 @@ const createWeeklySpotifyPlaylist = () => {
         const month = String(now.getMonth() + 1).padStart(2, "0");
         const day = String(now.getDate()).padStart(2, "0");
         const playlistName = `Weekly Top 40 - ${year}-${month}-${day}`;
+        const guildName = guild.name;
 
         spotifyApi
           .createPlaylist(playlistName, {
-            description: "Top 40 most played tracks of the week",
+            description: `Top 40 most played tracks of the week in ${guildName}!`,
             public: true,
           })
           .then((data) => {
@@ -143,14 +159,15 @@ const createWeeklySpotifyPlaylist = () => {
                 console.log("Playlist created and tracks added successfully!");
 
                 db.all(
-                  "SELECT guild_id, playlist_channel_id FROM settings",
-                  (err, rows) => {
+                  "SELECT guild_id, playlist_channel_id FROM settings WHERE guild_id = ?",
+                  [guildId],
+                  (err, settingsRows) => {
                     if (err) {
                       console.error(`Error fetching settings: ${err.message}`);
                       return;
                     }
 
-                    rows.forEach((row) => {
+                    settingsRows.forEach((row) => {
                       const guild = client.guilds.cache.get(row.guild_id);
                       if (guild) {
                         const channel = guild.channels.cache.get(
@@ -158,7 +175,7 @@ const createWeeklySpotifyPlaylist = () => {
                         );
                         if (channel) {
                           channel.send(
-                            `Weekly Top 40 playlist has been created! Check it out here: ${playlistUrl}`,
+                            `Weekly Top 40 playlist for ${guildName} has been created. Make sure to check it out! ${playlistUrl}`,
                           );
                         } else {
                           console.error(
@@ -356,13 +373,11 @@ client.on("interactionCreate", async (interaction) => {
       },
     );
   } else if (commandName === "forceplaylist") {
+    // TEST COMMAND, WILL BE REMOVED OR COMMENTED OUT AS SOON AS I VERIFY THAT THE CRONJOB WORKS.
     if (user.id === process.env.DISCORD_USER_ID) {
-      // Call the function to create the playlist
-      createWeeklySpotifyPlaylist();
-      // Reply to the user indicating that the playlist creation is triggered
+      createWeeklySpotifyPlaylist(guildId);
       interaction.reply("Playlist creation triggered!");
     } else {
-      // If the user is not authorized, reply with a message indicating that
       interaction.reply("You are not authorized to trigger this command.");
     }
   } else if (commandName === "setchannel") {
