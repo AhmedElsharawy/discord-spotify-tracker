@@ -1,6 +1,8 @@
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, REST, Routes } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
-
+const SpotifyWebApi = require("spotify-web-api-node");
+const cron = require("node-cron");
+const express = require("express");
 require("dotenv").config();
 
 const client = new Client({
@@ -26,36 +28,221 @@ const db = new sqlite3.Database("./tracks.db", (err) => {
         }
       },
     );
+    db.run(
+      "CREATE TABLE IF NOT EXISTS settings (guild_id TEXT PRIMARY KEY, playlist_channel_id TEXT)",
+      (err) => {
+        if (err) {
+          console.error(`Error creating table: ${err.message}`);
+        } else {
+          console.log('Table "settings" is ready');
+        }
+      },
+    );
   }
 });
 
-const registerCommands = (guild) => {
-  guild.commands.create({
-    name: "mostplayed",
-    description: "Display the most played tracks",
-  });
+const spotifyApi = new SpotifyWebApi({
+  clientId: process.env.SPOTIFY_CLIENT_ID,
+  clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+  redirectUri: process.env.SPOTIFY_REDIRECT_URI,
+});
 
-  guild.commands.create({
-    name: "mostactive",
-    description: "Display the most active user",
-  });
+const app = express();
 
-  guild.commands.create({
-    name: "leaderboard",
-    description: "Display the leaderboard of most active users",
-  });
+app.get("/login", (req, res) => {
+  const authorizeURL = spotifyApi.createAuthorizeURL([
+    "playlist-modify-public",
+    "playlist-modify-private",
+  ]);
+  res.redirect(authorizeURL);
+});
 
-  guild.commands.create({
-    name: "stats",
-    description: "Display your top 20 most played tracks and play count",
-  });
+app.get("/callback", (req, res) => {
+  const code = req.query.code || null;
+  spotifyApi.authorizationCodeGrant(code).then(
+    function (data) {
+      const accessToken = data.body["access_token"];
+      const refreshToken = data.body["refresh_token"];
+
+      spotifyApi.setAccessToken(accessToken);
+      spotifyApi.setRefreshToken(refreshToken);
+
+      process.env.SPOTIFY_ACCESS_TOKEN = accessToken;
+      process.env.SPOTIFY_REFRESH_TOKEN = refreshToken;
+
+      res.send("Success! You can close this window.");
+
+      // Schedule the weekly cron job to create the Spotify playlist
+      cron.schedule("0 0 * * 1", () => createWeeklySpotifyPlaylist());
+    },
+    function (err) {
+      console.log("Something went wrong!", err);
+      res.send("Error during authentication");
+    },
+  );
+});
+
+const PORT = process.env.PORT || 8888;
+app.listen(PORT, () => {
+  console.log(`Express server listening on port ${PORT}`);
+  console.log(
+    "Authorize this app by visiting this URL: http://localhost:" +
+      PORT +
+      "/login",
+  );
+});
+
+const createWeeklySpotifyPlaylist = () => {
+  db.all(
+    "SELECT track_name, artist, COUNT(*) as plays FROM tracks GROUP BY track_name, artist ORDER BY plays DESC LIMIT 40",
+    (err, rows) => {
+      if (err) {
+        console.error(err);
+        return;
+      }
+
+      const trackUris = [];
+      const fetchTrackPromises = rows.map((row) => {
+        return spotifyApi
+          .searchTracks(`track:${row.track_name} artist:${row.artist}`)
+          .then((data) => {
+            if (data.body.tracks.items.length > 0) {
+              trackUris.push(data.body.tracks.items[0].uri);
+            } else {
+              console.warn(
+                `Track not found on Spotify: ${row.track_name} by ${row.artist}`,
+              );
+            }
+          })
+          .catch((err) => {
+            console.error(
+              `Error searching for track on Spotify: ${err.message}`,
+            );
+          });
+      });
+
+      Promise.all(fetchTrackPromises).then(() => {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const playlistName = `Weekly Top 40 - ${year}-${month}-${day}`;
+
+        spotifyApi
+          .createPlaylist(playlistName, {
+            description: "Top 40 most played tracks of the week",
+            public: true,
+          })
+          .then((data) => {
+            const playlistId = data.body.id;
+            const playlistUrl = data.body.external_urls.spotify;
+
+            spotifyApi
+              .addTracksToPlaylist(playlistId, trackUris)
+              .then(() => {
+                console.log("Playlist created and tracks added successfully!");
+
+                db.all(
+                  "SELECT guild_id, playlist_channel_id FROM settings",
+                  (err, rows) => {
+                    if (err) {
+                      console.error(`Error fetching settings: ${err.message}`);
+                      return;
+                    }
+
+                    rows.forEach((row) => {
+                      const guild = client.guilds.cache.get(row.guild_id);
+                      if (guild) {
+                        const channel = guild.channels.cache.get(
+                          row.playlist_channel_id,
+                        );
+                        if (channel) {
+                          channel.send(
+                            `Weekly Top 40 playlist has been created! Check it out here: ${playlistUrl}`,
+                          );
+                        } else {
+                          console.error(
+                            `Channel not found: ${row.playlist_channel_id}`,
+                          );
+                        }
+                      } else {
+                        console.error(`Guild not found: ${row.guild_id}`);
+                      }
+                    });
+                  },
+                );
+              })
+              .catch((err) => {
+                console.error(
+                  `Error adding tracks to playlist: ${err.message}`,
+                );
+              });
+          })
+          .catch((err) => {
+            console.error(`Error creating playlist: ${err.message}`);
+          });
+      });
+    },
+  );
 };
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}!`);
-
   client.guilds.cache.forEach(registerCommands);
 });
+
+const registerCommands = async (guild) => {
+  const commands = [
+    {
+      name: "help",
+      description: "List help commands",
+    },
+    {
+      name: "mostplayed",
+      description: "Get the most played tracks in this server.",
+    },
+    {
+      name: "mostactive",
+      description: "Get the most active user in this server.",
+    },
+    {
+      name: "leaderboard",
+      description: "Get the leaderboard of most active users in this server.",
+    },
+    {
+      name: "stats",
+      description: "Get your personal play stats.",
+    },
+    {
+      name: "forceplaylist",
+      description: "Force creating a new weekly playlist.",
+    },
+    {
+      name: "setchannel",
+      description: "Set the channel for playlist announcements.",
+      options: [
+        {
+          name: "channel",
+          type: 7,
+          description: "The channel to send playlist announcements to",
+          required: true,
+        },
+      ],
+    },
+  ];
+
+  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+
+  try {
+    console.log(`Registering commands for guild ${guild.id}`);
+    await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), {
+      body: commands,
+    });
+    console.log(`Successfully registered commands for guild ${guild.id}`);
+  } catch (error) {
+    console.error(`Failed to register commands for guild ${guild.id}:`, error);
+  }
+};
 
 client.on("guildCreate", (guild) => {
   console.log(`Joined new guild: ${guild.name}`);
@@ -168,11 +355,45 @@ client.on("interactionCreate", async (interaction) => {
         }
       },
     );
+  } else if (commandName === "forceplaylist") {
+    if (user.id === process.env.DISCORD_USER_ID) {
+      // Call the function to create the playlist
+      createWeeklySpotifyPlaylist();
+      // Reply to the user indicating that the playlist creation is triggered
+      interaction.reply("Playlist creation triggered!");
+    } else {
+      // If the user is not authorized, reply with a message indicating that
+      interaction.reply("You are not authorized to trigger this command.");
+    }
+  } else if (commandName === "setchannel") {
+    const channelId = interaction.options.getChannel("channel").id;
+
+    db.run(
+      "INSERT OR REPLACE INTO settings (guild_id, playlist_channel_id) VALUES (?, ?)",
+      [guildId, channelId],
+      (err) => {
+        if (err) {
+          console.error(`Error setting playlist channel: ${err.message}`);
+          return interaction.reply(
+            "An error occurred while setting the playlist channel.",
+          );
+        }
+
+        interaction.reply(`Playlist channel set to <#${channelId}>`);
+      },
+    );
+  } else if (commandName === "help") {
+    const helpMessage = `**Available Commands:**
+      \`/mostplayed\` - Get the most played tracks in this server.
+      \`/mostactive\` - Get the most active Spotify user in this server.
+      \`/leaderboard\` - Get the leaderboard of most active Spotify users in this server.
+      \`/stats\` - Get your personal Spotify stats.
+      \`/setchannel\` - Sets a channel to send the weekly playlist every week.`;
+    return interaction.reply(helpMessage);
   }
 });
 
 client.on("presenceUpdate", (oldPresence, newPresence) => {
-  // Monitor user presence
   console.log(
     `Presence update detected for user: ${newPresence.user?.tag || "Unknown User"}`,
   );
@@ -209,8 +430,6 @@ client.on("presenceUpdate", (oldPresence, newPresence) => {
         );
       }
     });
-  } else {
-    console.log("No activities found.");
   }
 });
 
