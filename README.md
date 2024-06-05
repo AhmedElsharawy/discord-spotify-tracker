@@ -25,3 +25,5 @@ Run `npm i` to install all the necessary node_modules.
 Run the bot using `node main.js`
 
 Log into Spotify and enjoy! :)
+
+Invite my bot: [BeatMeeter](https://discord.com/oauth2/authorize?client_id=1246055712648466453)
