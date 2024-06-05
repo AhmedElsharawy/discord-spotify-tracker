@@ -60,31 +60,22 @@ app.get("/login", (req, res) => {
 app.get("/callback", (req, res) => {
   const code = req.query.code || null;
   spotifyApi.authorizationCodeGrant(code).then(
-    function (data) {
+    async function (data) {
       const accessToken = data.body["access_token"];
       const refreshToken = data.body["refresh_token"];
 
-      spotifyApi.setAccessToken(accessToken);
-      spotifyApi.setRefreshToken(refreshToken);
-
+      // Store tokens securely in your environment variables or database
       process.env.SPOTIFY_ACCESS_TOKEN = accessToken;
       process.env.SPOTIFY_REFRESH_TOKEN = refreshToken;
+
+      // Set access and refresh tokens for the Spotify API object
+      spotifyApi.setAccessToken(accessToken);
+      spotifyApi.setRefreshToken(refreshToken);
 
       res.send("Success! You can close this window.");
 
       // Schedule the weekly cron job to create the Spotify playlist
-      cron.schedule("0 0 * * 1", () => {
-        db.all("SELECT guild_id FROM settings", (err, rows) => {
-          if (err) {
-            console.error(`Error fetching guild settings: ${err.message}`);
-            return;
-          }
-
-          rows.forEach((row) => {
-            createWeeklySpotifyPlaylist(row.guild_id);
-          });
-        });
-      });
+      schedulePlaylistCreation();
     },
     function (err) {
       console.log("Something went wrong!", err);
@@ -104,6 +95,32 @@ app.listen(PORT, () => {
       "/login",
   );
 });
+
+const schedulePlaylistCreation = () => {
+  cron.schedule("0 0 * * 1", async () => {
+    try {
+      await refreshAccessToken();
+      await createPlaylists();
+    } catch (error) {
+      console.error("Error scheduling playlist creation:", error);
+    }
+  });
+};
+
+const refreshAccessToken = async () => {
+  try {
+    const data = await spotifyApi.refreshAccessToken();
+    const accessToken = data.body["access_token"];
+
+    // Update the access token
+    process.env.SPOTIFY_ACCESS_TOKEN = accessToken;
+    spotifyApi.setAccessToken(accessToken);
+    console.log("Access token refreshed successfully.");
+  } catch (error) {
+    console.error("Error refreshing access token:", error);
+    throw error;
+  }
+};
 
 const createWeeklySpotifyPlaylist = (guildId) => {
   const guild = client.guilds.cache.get(guildId);
@@ -141,8 +158,8 @@ const createWeeklySpotifyPlaylist = (guildId) => {
         const year = now.getFullYear();
         const month = String(now.getMonth() + 1).padStart(2, "0");
         const day = String(now.getDate()).padStart(2, "0");
-        const playlistName = `Weekly Top 40 - ${year}-${month}-${day}`;
         const guildName = guild.name;
+        const playlistName = `${guildName}'s Top 40 - ${year}-${month}-${day}`;
 
         spotifyApi
           .createPlaylist(playlistName, {
@@ -175,7 +192,7 @@ const createWeeklySpotifyPlaylist = (guildId) => {
                         );
                         if (channel) {
                           channel.send(
-                            `Weekly Top 40 playlist for ${guildName} has been created. Make sure to check it out! ${playlistUrl}`,
+                            `${guildName}'s Top 40 playlist has been created. Make sure to check it out! ${playlistUrl}`,
                           );
                         } else {
                           console.error(
@@ -375,8 +392,10 @@ client.on("interactionCreate", async (interaction) => {
   } else if (commandName === "forceplaylist") {
     // TEST COMMAND, WILL BE REMOVED OR COMMENTED OUT AS SOON AS I VERIFY THAT THE CRONJOB WORKS.
     if (user.id === process.env.DISCORD_USER_ID) {
+      await refreshAccessToken();
       createWeeklySpotifyPlaylist(guildId);
       interaction.reply("Playlist creation triggered!");
+      // console.log(`${accessToken}`);
     } else {
       interaction.reply("You are not authorized to trigger this command.");
     }
