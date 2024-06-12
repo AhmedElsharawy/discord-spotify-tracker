@@ -60,7 +60,7 @@ app.get("/login", (req, res) => {
 app.get("/callback", (req, res) => {
   const code = req.query.code || null;
   spotifyApi.authorizationCodeGrant(code).then(
-    async function (data) {
+    async function(data) {
       const accessToken = data.body["access_token"];
       const refreshToken = data.body["refresh_token"];
 
@@ -77,7 +77,7 @@ app.get("/callback", (req, res) => {
       // Schedule the weekly cron job to create the Spotify playlist
       schedulePlaylistCreation();
     },
-    function (err) {
+    function(err) {
       console.log("Something went wrong!", err);
       res.send("Error during authentication");
     },
@@ -89,18 +89,29 @@ app.listen(PORT, () => {
   console.log(`Express server listening on port ${PORT}`);
   console.log(
     "Authorize this app by visiting this URL:" +
-      process.env.YOUR_URI +
-      ":" +
-      PORT +
-      "/login",
+    process.env.YOUR_URI +
+    ":" +
+    PORT +
+    "/login",
   );
 });
 
 const schedulePlaylistCreation = () => {
-  cron.schedule("0 0 * * 1", async () => {
+  cron.schedule("0 20 * * 5", async () => {
     try {
       await refreshAccessToken();
-      await createPlaylists();
+      //await createWeeklySpotifyPlaylist();
+      db.all("SELECT guild_id, playlist_channel_id FROM settings WHERE playlist_channel_id IS NOT NULL", async(err, rows) => {
+        if (err) {
+          console.error("Error fetching guilds and channel IDs:", err);
+          return;
+        }
+
+        for (const row of rows){
+          const guildId = row.guild_id;
+          await createWeeklySpotifyPlaylist(guildId);
+        }
+      });
     } catch (error) {
       console.error("Error scheduling playlist creation:", error);
     }
@@ -123,101 +134,108 @@ const refreshAccessToken = async () => {
 };
 
 const createWeeklySpotifyPlaylist = (guildId) => {
-  const guild = client.guilds.cache.get(guildId);
-  db.all(
-    "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 40",
-    [guildId],
-    (err, rows) => {
-      if (err) {
-        console.error(err);
-        return;
-      }
+  try {
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) {
+      throw new Error(`Guild with ID ${guildId} not found.`)
+    }
+    db.all(
+      "SELECT track_name, artist, COUNT(*) as plays FROM tracks WHERE guild_id = ? GROUP BY track_name, artist ORDER BY plays DESC LIMIT 40",
+      [guildId],
+      (err, rows) => {
+        if (err) {
+          console.error(err);
+          return;
+        }
 
-      const trackUris = [];
-      const fetchTrackPromises = rows.map((row) => {
-        return spotifyApi
-          .searchTracks(`track:${row.track_name} artist:${row.artist}`)
-          .then((data) => {
-            if (data.body.tracks.items.length > 0) {
-              trackUris.push(data.body.tracks.items[0].uri);
-            } else {
-              console.warn(
-                `Track not found on Spotify: ${row.track_name} by ${row.artist}`,
+        const trackUris = [];
+        const fetchTrackPromises = rows.map((row) => {
+          return spotifyApi
+            .searchTracks(`track:${row.track_name} artist:${row.artist}`)
+            .then((data) => {
+              if (data.body.tracks.items.length > 0) {
+                trackUris.push(data.body.tracks.items[0].uri);
+              } else {
+                console.warn(
+                  `Track not found on Spotify: ${row.track_name} by ${row.artist}`,
+                );
+              }
+            })
+            .catch((err) => {
+              console.error(
+                `Error searching for track on Spotify: ${err.message}`,
               );
-            }
-          })
-          .catch((err) => {
-            console.error(
-              `Error searching for track on Spotify: ${err.message}`,
-            );
-          });
-      });
+            });
+        });
 
-      Promise.all(fetchTrackPromises).then(() => {
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, "0");
-        const day = String(now.getDate()).padStart(2, "0");
-        const guildName = guild.name;
-        const playlistName = `${guildName}'s Top 40 - ${year}-${month}-${day}`;
+        Promise.all(fetchTrackPromises).then(() => {
+          const now = new Date();
+          const year = now.getFullYear();
+          const month = String(now.getMonth() + 1).padStart(2, "0");
+          const day = String(now.getDate()).padStart(2, "0");
+          const guildName = guild.name;
+          const playlistName = `${guildName}'s Top 40 - ${year}-${month}-${day}`;
 
-        spotifyApi
-          .createPlaylist(playlistName, {
-            description: `Top 40 most played tracks of the week in ${guildName}!`,
-            public: true,
-          })
-          .then((data) => {
-            const playlistId = data.body.id;
-            const playlistUrl = data.body.external_urls.spotify;
+          spotifyApi
+            .createPlaylist(playlistName, {
+              description: `Top 40 most played tracks of the week in ${guildName}!`,
+              public: true,
+            })
+            .then((data) => {
+              const playlistId = data.body.id;
+              const playlistUrl = data.body.external_urls.spotify;
 
-            spotifyApi
-              .addTracksToPlaylist(playlistId, trackUris)
-              .then(() => {
-                console.log("Playlist created and tracks added successfully!");
+              spotifyApi
+                .addTracksToPlaylist(playlistId, trackUris)
+                .then(() => {
+                  console.log("Playlist created and tracks added successfully!");
 
-                db.all(
-                  "SELECT guild_id, playlist_channel_id FROM settings WHERE guild_id = ?",
-                  [guildId],
-                  (err, settingsRows) => {
-                    if (err) {
-                      console.error(`Error fetching settings: ${err.message}`);
-                      return;
-                    }
-
-                    settingsRows.forEach((row) => {
-                      const guild = client.guilds.cache.get(row.guild_id);
-                      if (guild) {
-                        const channel = guild.channels.cache.get(
-                          row.playlist_channel_id,
-                        );
-                        if (channel) {
-                          channel.send(
-                            `${guildName}'s Top 40 playlist has been created. Make sure to check it out! ${playlistUrl}`,
-                          );
-                        } else {
-                          console.error(
-                            `Channel not found: ${row.playlist_channel_id}`,
-                          );
-                        }
-                      } else {
-                        console.error(`Guild not found: ${row.guild_id}`);
+                  db.all(
+                    "SELECT guild_id, playlist_channel_id FROM settings WHERE guild_id = ?",
+                    [guildId],
+                    (err, settingsRows) => {
+                      if (err) {
+                        console.error(`Error fetching settings: ${err.message}`);
+                        return;
                       }
-                    });
-                  },
-                );
-              })
-              .catch((err) => {
-                console.error(
-                  `Error adding tracks to playlist: ${err.message}`,
-                );
-              });
-          })
-          .catch((err) => {
-            console.error(`Error creating playlist: ${err.message}`);
-          });
-      });
-    },
-  );
+
+                      settingsRows.forEach((row) => {
+                        const guild = client.guilds.cache.get(row.guild_id);
+                        if (guild) {
+                          const channel = guild.channels.cache.get(
+                            row.playlist_channel_id,
+                          );
+                          if (channel) {
+                            channel.send(
+                              `It's the weekend! Here are your Top 40 tracks for ${guildName}. Make sure to check it out here: ${playlistUrl}`,
+                            );
+                          } else {
+                            console.error(
+                              `Channel not found: ${row.playlist_channel_id}`,
+                            );
+                          }
+                        } else {
+                          console.error(`Guild not found: ${row.guild_id}`);
+                        }
+                      });
+                    },
+                  );
+                })
+                .catch((err) => {
+                  console.error(
+                    `Error adding tracks to playlist: ${err.message}`,
+                  );
+                });
+            })
+            .catch((err) => {
+              console.error(`Error creating playlist: ${err.message}`);
+            });
+        });
+      },
+    );
+  } catch (error) {
+    console.error("Error creating weekly spotify playlist:", error);
+  }
 };
 
 client.once("ready", () => {
