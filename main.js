@@ -95,7 +95,7 @@ app.listen(PORT, () => {
     "/login",
   );
 });
-
+// Cronjob 
 const schedulePlaylistCreation = () => {
   cron.schedule("0 20 * * 5", async () => {
     try {
@@ -174,11 +174,11 @@ const createWeeklySpotifyPlaylist = (guildId) => {
           const month = String(now.getMonth() + 1).padStart(2, "0");
           const day = String(now.getDate()).padStart(2, "0");
           const guildName = guild.name;
-          const playlistName = `${guildName}'s Top 40 - ${year}-${month}-${day}`;
+          const playlistName = `${guildName}'s Most Played - ${year}-${month}-${day}`;
 
           spotifyApi
             .createPlaylist(playlistName, {
-              description: `Top 40 most played tracks of the week in ${guildName}!`,
+              description: `Most played tracks of the week in ${guildName}!`,
               public: true,
             })
             .then((data) => {
@@ -207,7 +207,7 @@ const createWeeklySpotifyPlaylist = (guildId) => {
                           );
                           if (channel) {
                             channel.send(
-                              `It's the weekend! Here are your Top 40 tracks for ${guildName}. Make sure to check it out here: ${playlistUrl}`,
+                              `It's the weekend! Here are your most played tracks in ${guildName}, make sure to check them out! ${playlistUrl}`,
                             );
                           } else {
                             console.error(
