@@ -101,13 +101,13 @@ const schedulePlaylistCreation = () => {
     try {
       await refreshAccessToken();
       //await createWeeklySpotifyPlaylist();
-      db.all("SELECT guild_id, playlist_channel_id FROM settings WHERE playlist_channel_id IS NOT NULL", async(err, rows) => {
+      db.all("SELECT guild_id, playlist_channel_id FROM settings WHERE playlist_channel_id IS NOT NULL", async (err, rows) => {
         if (err) {
           console.error("Error fetching guilds and channel IDs:", err);
           return;
         }
 
-        for (const row of rows){
+        for (const row of rows) {
           const guildId = row.guild_id;
           await createWeeklySpotifyPlaylist(guildId);
         }
@@ -240,6 +240,9 @@ const createWeeklySpotifyPlaylist = (guildId) => {
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}!`);
+  client.guilds.cache.forEach(guild => {
+    console.log(`Bot is in guild: ${guild.id} - ${guild.name}`);
+  });
   client.guilds.cache.forEach(registerCommands);
 });
 
@@ -446,20 +449,27 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 client.on("presenceUpdate", (oldPresence, newPresence) => {
-  console.log(
-    `Presence update detected for user: ${newPresence.user?.tag || "Unknown User"}`,
-  );
+  //console.log(
+  //  `Presence update detected for user: ${newPresence.user?.tag || "Unknown User"}`,
+  //);
 
   if (newPresence.activities && newPresence.activities.length > 0) {
-    console.log(`Activities: ${JSON.stringify(newPresence.activities)}`);
+    // console.log(`Activities: ${JSON.stringify(newPresence.activities)}`);
     newPresence.activities.forEach((activity) => {
-      console.log(`Activity detected: ${JSON.stringify(activity)}`);
+      // console.log(`Activity detected: ${JSON.stringify(activity)}`);
       if (activity.type === 2 && activity.name === "Spotify") {
         const user = newPresence.user.tag;
         const trackName = activity.details;
         const artist = activity.state;
         const timestamp = new Date().toISOString();
         const guildId = newPresence.guild.id;
+        
+
+        //A random bot in a random ass server decided to add null entries. So here's a null check, thanks ManageBot very cool.
+        if (!trackName || !artist) {
+          console.warn(`Skipping null entry (Thanks ManageBot#0805, very cool.)`)
+          return;
+        }
 
         console.log(
           `User ${user} is listening to ${trackName} by ${artist} in guild ${guildId}`,
