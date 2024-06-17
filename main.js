@@ -443,7 +443,8 @@ client.on("interactionCreate", async (interaction) => {
       \`/mostactive\` - Get the most active Spotify user in this server.
       \`/leaderboard\` - Get the leaderboard of most active Spotify users in this server.
       \`/stats\` - Get your personal Spotify stats.
-      \`/setchannel\` - Sets a channel to send the weekly playlist every week.`;
+      \`/setchannel\` - Sets a channel to send the weekly playlist every week.
+      **[Invite BeatMeeter!](https://discord.com/oauth2/authorize?client_id=1246055712648466453)**`;
     return interaction.reply(helpMessage);
   }
 });
